@@ -22,7 +22,7 @@ class LeitbakeDetector:
     
     self.bridge = CvBridge()
     self.image_sub = rospy.Subscriber("/darknet_ros/detection_image",ImageWithBoundingBoxes,self.callback,queue_size = 1)
-    self.bounding_boxes_pub = rospy.Publisher("bounding_boxes_leitbake",ImageDetections)
+    self.bounding_boxes_pub = rospy.Publisher("bounding_boxes_leitbake",ImageDetections,queue_size = 1)
 
   def callback(self,data):
 
@@ -33,7 +33,7 @@ class LeitbakeDetector:
       print(e)
 
     bounding_boxes = data.bounding_boxes.bounding_boxes
-
+    
     (rows,cols,channels) = cv_image.shape
 
     detections = process_frame(cv_image,bounding_boxes)

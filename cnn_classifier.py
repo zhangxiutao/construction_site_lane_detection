@@ -17,7 +17,7 @@ import uuid
 import time
 import random
 import math
-
+window_area = min_wdw_sz[0]*min_wdw_sz[1]
 def adjust_gamma(image, gamma=1.0):
 
    invGamma = 1.0 / gamma
@@ -74,29 +74,47 @@ def PIL2cv2(img_pil):
 
     return img_cv2
 
+def checkIfTooRed(img_window_pil):
+    img_window_cv2 = PIL2cv2(img_window_pil)
+    arr_std = np.std(img_window_cv2,ddof=1)
+    # if arr_std < 55:
+    #     return True
+    # else:
+    return False
 def random_window(img_origin_pil, img_cv2, window_size):
 
+    count = 0
     nonzeros = cv2.findNonZero(img_cv2)
+    if nonzeros is None:
+        return None
     windows_pil = []
-    while True:
+    found = False
+    for count in range(10):
         anchor_point = random.choice(nonzeros)[0]
         mid_p1 = (anchor_point[0]-math.floor(window_size[0]/2),anchor_point[1]-math.floor(window_size[1]/2))
         mid_p2 = (anchor_point[0]+math.ceil(window_size[0]/2),anchor_point[1]+math.ceil(window_size[1]/2))
         if mid_p1[0] > 0 and mid_p1[1] > 0 and mid_p2[0] < img_origin_pil.size[0] and mid_p2[1] < img_origin_pil.size[1]:
+            found = True    
             break
-    
+    if not found:
+        return None
     if mid_p1[1]+int(window_size[1]/2) < img_origin_pil.size[1]:
         lower_window_pil = img_origin_pil.crop((mid_p1[0],mid_p1[1]+int(window_size[1]/2),mid_p2[0],mid_p2[1]+int(window_size[1]/2)))
+        if checkIfTooRed(lower_window_pil):
+            lower_window_pil = None
     else:
         lower_window_pil = None
 
     mid_window_pil = img_origin_pil.crop((mid_p1[0],mid_p1[1],mid_p2[0],mid_p2[1]))
-    
+    if checkIfTooRed(mid_window_pil):
+        mid_window_pil = None
     if mid_p1[1]-int(window_size[1]/2) > 0:
         upper_window_pil = img_origin_pil.crop((mid_p1[0],mid_p1[1]-int(window_size[1]/2),mid_p2[0],mid_p2[1]-int(window_size[1]/2)))
+        if checkIfTooRed(upper_window_pil):
+            upper_window_pil = None
     else:
         upper_window_pil = None
-    
+
     windows_pil.append(lower_window_pil)
     windows_pil.append(mid_window_pil)
     windows_pil.append(upper_window_pil)
@@ -118,14 +136,6 @@ class CnnClassifier:
         self.model.load_state_dict(torch.load("./src/construction_site_lane_detection/models/nn_model.pt"))
         self.model.eval()
 
-    def sliding_window(self, image, window_size, step_size):
-
-        for y in xrange(0, image.size[0], step_size[1]):
-            for x in xrange(0, image.size[1], step_size[0]):
-                if (x+window_size[0]) <= image.size[1] and (y+window_size[1]) <= image.size[0]:
-                    window = image.crop((x,y,x + window_size[0],y + window_size[1]))
-                    yield (x,y,window)
-
     def leibake_detect(self, img_origin_cv2):
 
         #img_origin_cv2 = img_origin_cv2[int(img_origin_cv2.shape[0]/2):int(img_origin_cv2.shape[0]),:]
@@ -145,42 +155,44 @@ class CnnClassifier:
 
         img_red_mask = red_mask(img_origin_cv2)
 
-        for i in xrange(100):
+        for i in xrange(3):
     
-            (x,y,windows_pil) = random_window(img_origin_pil,img_red_mask,(min_wdw_sz[0],min_wdw_sz[1]))
+            result = random_window(img_origin_pil,img_red_mask,(min_wdw_sz[0],min_wdw_sz[1]))
+            if result:
+                (x,y,windows_pil) = result
+                for idx,window_pil in enumerate(windows_pil):
+                    y = (idx-1)*min_wdw_sz[1]+y
+                    if window_pil:
+                        
+                        img_window_cv2 = np.array(window_pil.convert('RGB'))[:, :, ::-1].copy()
+                        img_window_hsv_cv2 = cv2.cvtColor(img_window_cv2, cv2.COLOR_BGR2HSV)
+                        h,s,v = cv2.split(img_window_hsv_cv2)
 
-            for window_pil in windows_pil:
+                        if np.mean(v) < 60:
+                            img_window_cv2 = adjust_gamma(img_window_cv2,2)
+                        
+                        window_pil = cv22PIL(img_window_cv2)
 
-                if window_pil:
-                    
-                    img_window_cv2 = np.array(window_pil.convert('RGB'))[:, :, ::-1].copy()
-                    img_window_hsv_cv2 = cv2.cvtColor(img_window_cv2, cv2.COLOR_BGR2HSV)
-                    h,s,v = cv2.split(img_window_hsv_cv2)
+                        #window_pil.show()
 
-                    if np.mean(v) < 60:
-                        img_window_cv2 = adjust_gamma(img_window_cv2,2)
-                    
-                    window_pil = cv22PIL(img_window_cv2)
-
-                    #window_pil.show()
-
-                    data = toTensor(window_pil)
-                    data = data.double()[:3,:,:]
-                    data = norm(data)
-                    data = data.unsqueeze(0)
-                    if self.test_on_gpu:
-                        data = data.to(self.device)
-                    
-                    output = torch.max(self.model(data), 1)  
-                    if 1 == int(output[1]):
-                        # fileName = uuid.uuid4().hex+".png"
-                        # filePath = "../data/detectedWindows/" + fileName
-                        # print(filePath)
-                        # window_pil.save(filePath)
-                        print "Detection:: Location -> ({}, {})".format(x, y)
-                        detections.append((x, y, x+int(min_wdw_sz[0]), y+int(min_wdw_sz[1])))
-                        scores.append(output[0])
-                        cd.append(detections[-1])
+                        data = toTensor(window_pil)
+                        data = data.double()[:3,:,:]
+                        data = norm(data)
+                        data = data.unsqueeze(0)
+                        if self.test_on_gpu:
+                            data = data.to(self.device)
+                        
+                        output = torch.max(self.model(data), 1)  
+                        if 1 == int(output[1]):
+                            fileName = uuid.uuid4().hex+".png"
+                            filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
+                            print(filePath)
+                            window_pil.save(filePath)
+                            #print "Detection:: Location -> ({}, {})".format(x, y)
+                            detections.append((x, y, x+int(min_wdw_sz[0]), y+int(min_wdw_sz[1])))
+                            scores.append(output[0])
+                            cd.append(detections[-1])
+            
 
         detections = torch.tensor(detections).double()
         scores = torch.tensor(scores)
