@@ -47,22 +47,11 @@ def process_frame(img_cv2,bounding_boxes):
 
     start = timer()
 
-    height, width = img_cv2.shape[0:2]
-    img_cv2 = img_cv2[int(height/2):height,0:width,:]
-
-    detections = leitbake_detector.leibake_detect(img_cv2)
-    for bounding_box in bounding_boxes:
-        if bounding_box.Class == "car" or bounding_box.Class == "truck":
-            bounding_box.ymin = bounding_box.ymin-int(height/2)
-            bounding_box.ymax = bounding_box.ymax-int(height/2)
-            cv2.rectangle(img_cv2,(bounding_box.xmin,bounding_box.ymin),(bounding_box.xmax,bounding_box.ymax),(255,0,0),2)
-            for idx,detection in enumerate(detections):         
-                if checkIfTailLight(bounding_box,detection):
-                    detections.pop(idx)
+    detections,img_lowerhalf_cv2 = leitbake_detector.leibake_detect(img_cv2,bounding_boxes)
 
     for (x1,y1,x2,y2) in detections:
-        cv2.rectangle(img_cv2,(x1,y1),(x2,y2),(0,0,255),2)
-    cv2.imshow("leitbake_detected",img_cv2)
+        cv2.rectangle(img_lowerhalf_cv2,(x1,y1),(x2,y2),(0,0,255),2)
+    cv2.imshow("leitbake_detected",img_lowerhalf_cv2)
     cv2.waitKey(1)
     end = timer()
     print "fps is {}".format(1/(end-start))

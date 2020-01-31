@@ -40,7 +40,7 @@ def increase_brightness(img, value=30):
     return img
 
 def red_mask(img_cv2):
-
+    
     img_hsv = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2HSV)
     #red mask0
     lower_red = np.array([0, 43, 46])
@@ -55,8 +55,8 @@ def red_mask(img_cv2):
     res_red = cv2.bitwise_and(img_cv2, img_cv2, mask=mask_red)
     
     #erosion
-    kernel = np.ones((5,5),np.uint8)
-    res_red = cv2.erode(res_red,kernel)
+    # kernel = np.ones((5,5),np.uint8)
+    # res_red = cv2.erode(res_red,kernel)
     h,s,red_gray=cv2.split(res_red)
 
     return red_gray
@@ -135,33 +135,51 @@ class CnnClassifier:
         self.model.double()
         self.model.load_state_dict(torch.load("./src/construction_site_lane_detection/models/nn_model.pt"))
         self.model.eval()
+        self.state = 1 #there is a red truck in front
 
-    def leibake_detect(self, img_origin_cv2):
+    def leibake_detect(self,img_origin_cv2,bounding_boxes):   
 
-        #img_origin_cv2 = img_origin_cv2[int(img_origin_cv2.shape[0]/2):int(img_origin_cv2.shape[0]),:]
-        img_origin_pil = cv22PIL(img_origin_cv2)
+
         # List to store the detections
         detections = []
         scores = []
-        # The current scale of the image
-        scale = 0
 
         toTensor = transforms.ToTensor()
         norm = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 
         # This list contains detections at the current scale
         cd = []
-        count = 1
 
-        img_red_mask = red_mask(img_origin_cv2)
+        # area_img = img_red_mask.shape[0]*img_red_mask.shape[1]
+        # num_nonzero = cv2.countNonZero(img_red_mask)
+        # red_pixel_ratio = num_nonzero/area_img
 
+        height, width = img_origin_cv2.shape[0:2]
+        img_lowerhalf_cv2 = img_origin_cv2[int(height/2):(height),0:width,:]
+        img_lowerhalf_red_masked_cv2 = red_mask(img_lowerhalf_cv2) 
+        img_car_mask = np.ones_like(img_lowerhalf_red_masked_cv2).astype(np.uint8)
+        for bounding_box in bounding_boxes:
+            if bounding_box.Class == "car" or bounding_box.Class == "truck" or bounding_box.Class == "train" or bounding_box.Class == "stop sign":
+                bounding_box.ymin = bounding_box.ymin-int(height/2)
+                bounding_box.ymax = bounding_box.ymax-int(height/2)
+                
+                img_car_mask[max(0,bounding_box.ymin):max(0,bounding_box.ymax),bounding_box.xmin:bounding_box.xmax] = 0
+        img_car_mask[img_car_mask==1] = 255
+        cv2.imshow("car_mask",img_car_mask)
+        img_lowerhalf_car_masked_cv2 = cv2.bitwise_and(img_lowerhalf_red_masked_cv2,img_lowerhalf_red_masked_cv2,mask=img_car_mask)
+        
+        img_lowerhalf_pil = cv22PIL(img_lowerhalf_cv2)
+        
+        # if red_pixel_ratio >= 0.1:
+        #     print("whole image too red!")
+        #     return []
         for i in xrange(3):
     
-            result = random_window(img_origin_pil,img_red_mask,(min_wdw_sz[0],min_wdw_sz[1]))
+            result = random_window(img_lowerhalf_pil,img_lowerhalf_car_masked_cv2,(min_wdw_sz[0],min_wdw_sz[1]))
             if result:
                 (x,y,windows_pil) = result
                 for idx,window_pil in enumerate(windows_pil):
-                    y = (idx-1)*min_wdw_sz[1]+y
+                    y = -int((idx-1)*min_wdw_sz[1]/2)+y
                     if window_pil:
                         
                         img_window_cv2 = np.array(window_pil.convert('RGB'))[:, :, ::-1].copy()
@@ -184,7 +202,7 @@ class CnnClassifier:
                         
                         output = torch.max(self.model(data), 1)  
                         if 1 == int(output[1]):
-                            fileName = uuid.uuid4().hex+".png"
+                            fileName = uuid.uuid4().hex+"_____"+str(idx)+".png"
                             filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
                             print(filePath)
                             window_pil.save(filePath)
@@ -203,5 +221,7 @@ class CnnClassifier:
         else:
             detections_nms = []
 
-        return detections_nms	
+        cv2.rectangle(img_lowerhalf_cv2,(bounding_box.xmin,bounding_box.ymin),(bounding_box.xmax,bounding_box.ymax),(255,0,0),2)
+
+        return detections_nms,img_lowerhalf_cv2
         
