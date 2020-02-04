@@ -35,20 +35,23 @@ class LeitbakeDetector:
     bounding_boxes = data.bounding_boxes.bounding_boxes
     
     (rows,cols,channels) = cv_image.shape
+    ret = process_frame(cv_image,bounding_boxes)
+    if ret is not None:
+      detections = ret
+      imageDetections = ImageDetections()
 
-    detections = process_frame(cv_image,bounding_boxes)
-    imageDetections = ImageDetections()
+      for (x1,y1,x2,y2) in detections:
+            
+        detections_msg = Detection()
+        detections_msg.x1 = x1
+        detections_msg.y1 = y1
+        detections_msg.x2 = x2 
+        detections_msg.y2 = y2
+        imageDetections.detections.append(detections_msg)
+        self.bounding_boxes_pub.publish(imageDetections)
 
-    for (x1,y1,x2,y2) in detections:
-          
-      detections_msg = Detection()
-      detections_msg.x1 = x1
-      detections_msg.y1 = y1
-      detections_msg.x2 = x2 
-      detections_msg.y2 = y2
-      imageDetections.detections.append(detections_msg)
 
-    self.bounding_boxes_pub.publish(imageDetections)
+
 
 def main(args):
   

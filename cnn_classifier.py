@@ -43,18 +43,17 @@ def red_mask(img_cv2):
     
     img_hsv = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2HSV)
     #red mask0
-    lower_red = np.array([0, 43, 46])
-    upper_red = np.array([10, 255, 255])
+    lower_red = np.array([0, 100, 46]) #0, 43, 46
+    upper_red = np.array([10, 255, 255]) #10, 255, 255
     mask0 = cv2.inRange(img_hsv,lower_red,upper_red)
     #red mask1
-    lower_red = np.array([156, 43, 46])
-    upper_red = np.array([180, 255, 255])
+    lower_red = np.array([156, 100, 46]) #156, 43, 46
+    upper_red = np.array([180, 255, 255]) #180, 255, 255
     mask1 = cv2.inRange(img_hsv,lower_red,upper_red)
 
     mask_red = mask0 + mask1
     res_red = cv2.bitwise_and(img_cv2, img_cv2, mask=mask_red)
     
-    #erosion
     # kernel = np.ones((5,5),np.uint8)
     # res_red = cv2.erode(res_red,kernel)
     h,s,red_gray=cv2.split(res_red)
@@ -71,6 +70,24 @@ def cv22PIL(img_cv2):
 def PIL2cv2(img_pil):
 
     img_cv2 = np.array(img_pil.convert('RGB'))[:, :, ::-1].copy() 
+
+    return img_cv2
+
+def drawLines(img_cv2,lines):
+
+    for line in lines: 
+        rho, theta = line[0]
+        angle = theta*180/np.pi
+        if angle > 80 and angle < 100:
+            a = np.cos(theta)
+            b = np.sin(theta)
+            x0 = a * rho
+            y0 = b * rho
+            x1 = int(x0 + 1000 * (-b))
+            y1 = int(y0 + 1000 * (a))
+            x2 = int(x0 - 1000 * (-b))
+            y2 = int(y0 - 1000 * (a))
+            cv2.line(img_cv2, (x1, y1), (x2, y2), (0, 0, 255))
 
     return img_cv2
 
@@ -136,10 +153,12 @@ class CnnClassifier:
         self.model.load_state_dict(torch.load("./src/construction_site_lane_detection/models/nn_model.pt"))
         self.model.eval()
         self.state = 1 #there is a red truck in front
+        self.frame_count = 1
+        self.lowerhalf_height = 192
+        self.lowerhalf_width = 640
+        self.img_car_mask = np.ones([self.lowerhalf_height,self.lowerhalf_width]).astype(np.uint8)
 
-    def leibake_detect(self,img_origin_cv2,bounding_boxes):   
-
-
+    def leibake_detect(self,img_origin_cv2,bounding_boxes):
         # List to store the detections
         detections = []
         scores = []
@@ -150,78 +169,100 @@ class CnnClassifier:
         # This list contains detections at the current scale
         cd = []
 
-        # area_img = img_red_mask.shape[0]*img_red_mask.shape[1]
-        # num_nonzero = cv2.countNonZero(img_red_mask)
-        # red_pixel_ratio = num_nonzero/area_img
-
         height, width = img_origin_cv2.shape[0:2]
-        img_lowerhalf_cv2 = img_origin_cv2[int(height/2):(height),0:width,:]
-        img_lowerhalf_red_masked_cv2 = red_mask(img_lowerhalf_cv2) 
-        img_car_mask = np.ones_like(img_lowerhalf_red_masked_cv2).astype(np.uint8)
+        self.lowerhalf_height = int(height/2)
+        self.lowerhalf_width = width
+        img_lowerhalf_cv2 = img_origin_cv2[self.lowerhalf_height:(height),0:self.lowerhalf_width,:]
+        img_lowerhalf_pil = cv22PIL(img_lowerhalf_cv2)
+
+        img_lowerhalf_red_masked_cv2 = red_mask(img_lowerhalf_cv2)       
         for bounding_box in bounding_boxes:
             if bounding_box.Class == "car" or bounding_box.Class == "truck" or bounding_box.Class == "train" or bounding_box.Class == "stop sign":
                 bounding_box.ymin = bounding_box.ymin-int(height/2)
                 bounding_box.ymax = bounding_box.ymax-int(height/2)
                 
-                img_car_mask[max(0,bounding_box.ymin):max(0,bounding_box.ymax),bounding_box.xmin:bounding_box.xmax] = 0
-        img_car_mask[img_car_mask==1] = 255
-        cv2.imshow("car_mask",img_car_mask)
-        img_lowerhalf_car_masked_cv2 = cv2.bitwise_and(img_lowerhalf_red_masked_cv2,img_lowerhalf_red_masked_cv2,mask=img_car_mask)
-        
-        img_lowerhalf_pil = cv22PIL(img_lowerhalf_cv2)
-        
-        # if red_pixel_ratio >= 0.1:
-        #     print("whole image too red!")
-        #     return []
-        for i in xrange(3):
-    
-            result = random_window(img_lowerhalf_pil,img_lowerhalf_car_masked_cv2,(min_wdw_sz[0],min_wdw_sz[1]))
-            if result:
-                (x,y,windows_pil) = result
-                for idx,window_pil in enumerate(windows_pil):
-                    y = -int((idx-1)*min_wdw_sz[1]/2)+y
-                    if window_pil:
-                        
-                        img_window_cv2 = np.array(window_pil.convert('RGB'))[:, :, ::-1].copy()
-                        img_window_hsv_cv2 = cv2.cvtColor(img_window_cv2, cv2.COLOR_BGR2HSV)
-                        h,s,v = cv2.split(img_window_hsv_cv2)
+                self.img_car_mask[max(0,bounding_box.ymin):max(0,bounding_box.ymax),bounding_box.xmin:bounding_box.xmax] = 0
+        self.img_car_mask[self.img_car_mask==1] = 255
+        cv2.imshow("car_mask",self.img_car_mask)
+        if (self.frame_count % 10) == 0:
 
-                        if np.mean(v) < 60:
-                            img_window_cv2 = adjust_gamma(img_window_cv2,2)
-                        
-                        window_pil = cv22PIL(img_window_cv2)
+            img_lowerhalf_car_masked_cv2 = cv2.bitwise_and(img_lowerhalf_red_masked_cv2,img_lowerhalf_red_masked_cv2,mask=self.img_car_mask)
 
-                        #window_pil.show()
+            ret,img_thresh_cv2=cv2.threshold(img_lowerhalf_car_masked_cv2,0,255,0)
 
-                        data = toTensor(window_pil)
-                        data = data.double()[:3,:,:]
-                        data = norm(data)
-                        data = data.unsqueeze(0)
-                        if self.test_on_gpu:
-                            data = data.to(self.device)
-                        
-                        output = torch.max(self.model(data), 1)  
-                        if 1 == int(output[1]):
-                            fileName = uuid.uuid4().hex+"_____"+str(idx)+".png"
-                            filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
-                            print(filePath)
-                            window_pil.save(filePath)
-                            #print "Detection:: Location -> ({}, {})".format(x, y)
-                            detections.append((x, y, x+int(min_wdw_sz[0]), y+int(min_wdw_sz[1])))
-                            scores.append(output[0])
-                            cd.append(detections[-1])
+            contours, hierarchy = cv2.findContours(img_thresh_cv2, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            img_contourfiltered = img_thresh_cv2
+            for contour in contours:
+                if cv2.contourArea(contour)>100 or cv2.contourArea(contour)<20:
+                    img_contourfiltered = cv2.drawContours(img_contourfiltered, [contour], -1, 0, thickness=cv2.FILLED)
+            cv2.imshow("contourfiltered",img_contourfiltered)
+
+            hough_lines = cv2.HoughLines(img_contourfiltered, 10, np.pi / 180, 116)
+            if hough_lines is not None:
+                img_lowerhalf_cv2=drawLines(img_lowerhalf_cv2,hough_lines)        
             
 
-        detections = torch.tensor(detections).double()
-        scores = torch.tensor(scores)
 
-        if len(detections) != 0:
-            detections_nms_idx = ops.nms(detections,scores,0.2)
-            detections_nms = [detections[i] for i in detections_nms_idx]
-        else:
-            detections_nms = []
-
-        cv2.rectangle(img_lowerhalf_cv2,(bounding_box.xmin,bounding_box.ymin),(bounding_box.xmax,bounding_box.ymax),(255,0,0),2)
-
-        return detections_nms,img_lowerhalf_cv2
+            for i in xrange(5):
         
+                result = random_window(img_lowerhalf_pil,img_contourfiltered,(min_wdw_sz[0],min_wdw_sz[1]))
+                if result:
+                    (x,y,windows_pil) = result
+                    for idx,window_pil in enumerate(windows_pil):
+                        y = -int((idx-1)*min_wdw_sz[1]/2)+y
+                        if window_pil:
+                            
+                            img_window_cv2 = np.array(window_pil.convert('RGB'))[:, :, ::-1].copy()
+                            img_window_hsv_cv2 = cv2.cvtColor(img_window_cv2, cv2.COLOR_BGR2HSV)
+                            h,s,v = cv2.split(img_window_hsv_cv2)
+
+                            if np.mean(v) < 60:
+                                img_window_cv2 = adjust_gamma(img_window_cv2,2)
+                            
+                            window_pil = cv22PIL(img_window_cv2)
+
+                            #window_pil.show()
+
+                            data = toTensor(window_pil)
+                            data = data.double()[:3,:,:]
+                            data = norm(data)
+                            data = data.unsqueeze(0)
+                            if self.test_on_gpu:
+                                data = data.to(self.device)
+                            
+                            output = torch.max(self.model(data), 1)  
+                            if 1 == int(output[1]):
+                                fileName = uuid.uuid4().hex+"_____"+str(idx)+".png"
+                                filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
+                                print(filePath)
+                                window_pil.save(filePath)
+                                #print "Detection:: Location -> ({}, {})".format(x, y)
+                                detections.append((x, y, x+int(min_wdw_sz[0]), y+int(min_wdw_sz[1])))
+                                scores.append(output[0])
+                                cd.append(detections[-1])
+                
+
+            detections = torch.tensor(detections).double()
+            scores = torch.tensor(scores)
+
+            if len(detections) != 0:
+                detections_nms_idx = ops.nms(detections,scores,0.2)
+                detections_nms = [detections[i] for i in detections_nms_idx]
+            else:
+                detections_nms = []
+            
+            if (self.frame_count % 100) == 0:
+                self.frame_count = 1
+                self.img_car_mask = np.ones_like(img_lowerhalf_red_masked_cv2).astype(np.uint8)
+            else:
+                self.frame_count = self.frame_count+1
+                
+            
+            cv2.rectangle(img_lowerhalf_cv2,(bounding_box.xmin,bounding_box.ymin),(bounding_box.xmax,bounding_box.ymax),(255,0,0),2)
+            
+            return detections_nms,img_lowerhalf_cv2
+        else:
+            self.frame_count = self.frame_count + 1
+            return None
+        
+       
