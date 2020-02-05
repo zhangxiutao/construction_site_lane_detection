@@ -17,6 +17,7 @@ import uuid
 import time
 import random
 import math
+import imutils
 window_area = min_wdw_sz[0]*min_wdw_sz[1]
 def adjust_gamma(image, gamma=1.0):
 
@@ -43,19 +44,20 @@ def red_mask(img_cv2):
     
     img_hsv = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2HSV)
     #red mask0
-    lower_red = np.array([0, 100, 46]) #0, 43, 46
+    lower_red = np.array([0, 43, 46]) #0, 43, 46
     upper_red = np.array([10, 255, 255]) #10, 255, 255
     mask0 = cv2.inRange(img_hsv,lower_red,upper_red)
     #red mask1
-    lower_red = np.array([156, 100, 46]) #156, 43, 46
+    lower_red = np.array([156, 43, 46]) #156, 43, 46
     upper_red = np.array([180, 255, 255]) #180, 255, 255
     mask1 = cv2.inRange(img_hsv,lower_red,upper_red)
 
     mask_red = mask0 + mask1
     res_red = cv2.bitwise_and(img_cv2, img_cv2, mask=mask_red)
-    
-    # kernel = np.ones((5,5),np.uint8)
+     
+    #kernel = np.ones((10,10),np.uint8)
     # res_red = cv2.erode(res_red,kernel)
+    # res_red = cv2.morphologyEx(res_red, cv2.MORPH_CLOSE, kernel)
     h,s,red_gray=cv2.split(res_red)
 
     return red_gray
@@ -98,6 +100,39 @@ def checkIfTooRed(img_window_pil):
     #     return True
     # else:
     return False
+
+def random_window_contourbased(img_origin_pil, img_cv2, window_size):
+
+    cnts = cv2.findContours(img_cv2.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+
+    # loop over the contours
+    for c in cnts:
+        # compute the center of the contour
+        M = cv2.moments(c)
+        if M["m00"] != 0:
+            cX = int(M["m10"] / M["m00"])
+            cY = int(M["m01"] / M["m00"])
+            # draw the contour and center of the shape on the image
+            cv2.drawContours(img_lowerhalf_cv2, [c], -1, (0, 255, 0), 2)
+            cv2.circle(img_lowerhalf_cv2, (cX, cY), 3, (0, 0, 255), -1)
+
+    count = 0
+    nonzeros = cv2.findNonZero(img_cv2)
+    if nonzeros is None:
+        return None
+    windows_pil = []
+    found = False
+    for count in range(10):
+        anchor_point = random.choice(nonzeros)[0]
+        mid_p1 = (anchor_point[0]-math.floor(window_size[0]/2),anchor_point[1]-math.floor(window_size[1]/2))
+        mid_p2 = (anchor_point[0]+math.ceil(window_size[0]/2),anchor_point[1]+math.ceil(window_size[1]/2))
+        if mid_p1[0] > 0 and mid_p1[1] > 0 and mid_p2[0] < img_origin_pil.size[0] and mid_p2[1] < img_origin_pil.size[1]:
+            found = True    
+            break
+
+    return (mid_p1[0],mid_p1[1],windows_pil)
+
 def random_window(img_origin_pil, img_cv2, window_size):
 
     count = 0
@@ -154,7 +189,7 @@ class CnnClassifier:
         self.model.eval()
         self.state = 1 #there is a red truck in front
         self.frame_count = 1
-        self.lowerhalf_height = 192
+        self.lowerhalf_height = 96 #(384(total height)-288(cropped height))
         self.lowerhalf_width = 640
         self.img_car_mask = np.ones([self.lowerhalf_height,self.lowerhalf_width]).astype(np.uint8)
 
@@ -170,7 +205,7 @@ class CnnClassifier:
         cd = []
 
         height, width = img_origin_cv2.shape[0:2]
-        self.lowerhalf_height = int(height/2)
+        self.lowerhalf_height = int(3*height/4)
         self.lowerhalf_width = width
         img_lowerhalf_cv2 = img_origin_cv2[self.lowerhalf_height:(height),0:self.lowerhalf_width,:]
         img_lowerhalf_pil = cv22PIL(img_lowerhalf_cv2)
@@ -178,28 +213,44 @@ class CnnClassifier:
         img_lowerhalf_red_masked_cv2 = red_mask(img_lowerhalf_cv2)       
         for bounding_box in bounding_boxes:
             if bounding_box.Class == "car" or bounding_box.Class == "truck" or bounding_box.Class == "train" or bounding_box.Class == "stop sign":
-                bounding_box.ymin = bounding_box.ymin-int(height/2)
-                bounding_box.ymax = bounding_box.ymax-int(height/2)
+                bounding_box.ymin = bounding_box.ymin-int(3*height/4)
+                bounding_box.ymax = bounding_box.ymax-int(3*height/4)
                 
                 self.img_car_mask[max(0,bounding_box.ymin):max(0,bounding_box.ymax),bounding_box.xmin:bounding_box.xmax] = 0
         self.img_car_mask[self.img_car_mask==1] = 255
         cv2.imshow("car_mask",self.img_car_mask)
         if (self.frame_count % 10) == 0:
-
             img_lowerhalf_car_masked_cv2 = cv2.bitwise_and(img_lowerhalf_red_masked_cv2,img_lowerhalf_red_masked_cv2,mask=self.img_car_mask)
 
             ret,img_thresh_cv2=cv2.threshold(img_lowerhalf_car_masked_cv2,0,255,0)
 
-            contours, hierarchy = cv2.findContours(img_thresh_cv2, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            cnts_before_cntfiltered, hierarchy = cv2.findContours(img_thresh_cv2, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             img_contourfiltered = img_thresh_cv2
-            for contour in contours:
-                if cv2.contourArea(contour)>100 or cv2.contourArea(contour)<20:
+            for contour in cnts_before_cntfiltered:
+                if cv2.contourArea(contour)>150 or cv2.contourArea(contour)<20:
                     img_contourfiltered = cv2.drawContours(img_contourfiltered, [contour], -1, 0, thickness=cv2.FILLED)
+            
+
+               
+
+
             cv2.imshow("contourfiltered",img_contourfiltered)
 
-            hough_lines = cv2.HoughLines(img_contourfiltered, 10, np.pi / 180, 116)
-            if hough_lines is not None:
-                img_lowerhalf_cv2=drawLines(img_lowerhalf_cv2,hough_lines)        
+            hough_lines = cv2.HoughLinesP(img_contourfiltered, 1, np.pi / 180, threshold = 1,minLineLength = 50,maxLineGap = 200)
+            hough_lines = np.squeeze(hough_lines)
+            if hough_lines[()] is not None:
+                if hough_lines.ndim == 1:
+                    hough_lines = hough_lines.reshape(1,4)
+                for x1,y1,x2,y2 in hough_lines:
+                    if x1 != x2:
+                        angle_line = abs(math.atan((y1-y2)/(x2-x1))*180/math.pi)
+                    else:
+                        angle_line = 90
+                    if angle_line < 18:
+                        cv2.line(img_lowerhalf_cv2,(x1,y1),(x2,y2),(0,255,0),2)
+
+            # if hough_lines is not None:
+            #     img_lowerhalf_cv2=drawLines(img_lowerhalf_cv2,hough_lines)        
             
 
 
@@ -232,10 +283,10 @@ class CnnClassifier:
                             
                             output = torch.max(self.model(data), 1)  
                             if 1 == int(output[1]):
-                                fileName = uuid.uuid4().hex+"_____"+str(idx)+".png"
-                                filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
-                                print(filePath)
-                                window_pil.save(filePath)
+                                # fileName = uuid.uuid4().hex+"_____"+str(idx)+".png"
+                                # filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
+                                # print(filePath)
+                                # window_pil.save(filePath)
                                 #print "Detection:: Location -> ({}, {})".format(x, y)
                                 detections.append((x, y, x+int(min_wdw_sz[0]), y+int(min_wdw_sz[1])))
                                 scores.append(output[0])
