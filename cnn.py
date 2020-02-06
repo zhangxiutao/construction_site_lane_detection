@@ -19,6 +19,7 @@ class Net(nn.Module):
 
         
     def forward(self, x):
+        print(x.size())
         # add sequence of convolutional and max pooling layers
         #print(self.conv1(x).size()) #(32, 16, 31, 91) (batch, depth, width, height)
         x = self.pool(F.relu(self.conv1(x)))
