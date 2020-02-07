@@ -145,49 +145,7 @@ def windows_search_contourbased(img_binary_cv2, window_size):
         y2_corrected = p2[1]
         if len(contour_centers_window_masked) >= 2:
 
-            if p1[0] >= -pad_size and p1[1] >= -pad_size and p2[0] <= (width+pad_size) and p2[1] <= (height+pad_size):
-
-                # if p1[0] < 0 and p1[0] >= -pad_size and p1[1] < 0 and p1[1] >= -pad_size:
-
-                #     x1_corrected = 0
-                #     y1_corrected = 0
-                #     x2_corrected = x1_corrected+window_size[0]
-                #     y2_corrected = y1_corrected+window_size[1]
-
-                # if p2[0] < width and p1[0] >= 0 and p1[1] < 0 and p1[1] >= -pad_size:
-                    
-                #     x1_corrected = p1[0]
-                #     y1_corrected = p1[1]
-                #     x2_corrected = p2[0]
-                #     y2_corrected = p2[1]   
-
-                # if p1[0] < 0 and p1[0] >= -pad_size and p2[1] >= width and p2[1] <= (width+pad_size):
-                    
-                #     x1_corrected = width-1-window_size[0]
-                #     y1_corrected = 0
-                #     x2_corrected = width-1
-                #     y2_corrected = window_size[1]
-
-                # if  p2[0] <= (width+pad_size) and p2[1] <= height and p1[1] >= 0:
-
-                #     x1_corrected = p1[0]
-                #     y1_corrected = p1[1]
-                #     x2_corrected = width-1
-                #     y2_corrected = p2[1]                       
-
-                # if  p2[0] <= (width+pad_size) and p2[0] >= width and p2[1] <= (height+pad_size) and p1[1] >= height:
-
-                #     x1_corrected = width-1-window_size[0]
-                #     y1_corrected = height-1-window_size[1]
-                #     x2_corrected = width-1
-                #     y2_corrected = height-1                      
-
-                # if  p2[0] <= (width+pad_size) and p2[0] >= width and p2[1] <= (height+pad_size) and p1[1] >= height:
-
-                #     x1_corrected = width-1-window_size[0]
-                #     y1_corrected = height-1-window_size[1]
-                #     x2_corrected = width-1
-                #     y2_corrected = height-1                   
+            if p1[0] >= -pad_size and p1[1] >= -pad_size and p2[0] <= (width+pad_size) and p2[1] <= (height+pad_size):             
 
                 if  p2[1] <= (height+pad_size) and p2[1] >= height:
 
@@ -206,7 +164,7 @@ def windows_search_contourbased(img_binary_cv2, window_size):
 
                 if p2[0] >= width and p2[0] <= (width+pad_size):
                     
-                    x1_corrected = width-1-window_size[1]
+                    x1_corrected = width-1-window_size[0]
                     x2_corrected = width-1
                 
                 detections.append((x1_corrected,y1_corrected,x2_corrected,y2_corrected))
@@ -350,16 +308,12 @@ class CnnClassifier:
      
             coordinates_windows = windows_search_contourbased(img_contourfiltered,min_wdw_sz)
             cv2.imshow("contourfiltered",img_contourfiltered)
-            print(coordinates_windows)
             if len(coordinates_windows)>=3:
-
+                
                 print("construction site candidate frame found!"+str(self.frame_count))
 
                 for coordinate_window in coordinates_windows:
-                    #print([coordinate_window[1]+height-lowerhalf_height,coordinate_window[3]+height-lowerhalf_height, coordinate_window[0],coordinate_window[2]])
-                    print(coordinate_window[1]+height-lowerhalf_height,coordinate_window[3]+height-lowerhalf_height)
-                    print(height)
-                    img_window_pil = cv22PIL(img_origin_cv2[coordinate_window[1]+height-lowerhalf_height:coordinate_window[3]+height-lowerhalf_height, coordinate_window[0]:coordinate_window[2]])
+                    img_window_pil = cv22PIL(img_origin_cv2[coordinate_window[1]+height-lowerhalf_height:coordinate_window[3]+height-lowerhalf_height, coordinate_window[0]:coordinate_window[2]])               
                     imgs_candidate_window_pil.append(img_window_pil)
                     if img_window_pil:
                         
@@ -381,10 +335,6 @@ class CnnClassifier:
                         
                         output = torch.max(self.model(data), 1)  
                         if 1 == int(output[1]):
-                            fileName = uuid.uuid4().hex+"_____"+".png"
-                            filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
-                            print(filePath)
-                            img_window_pil.save(filePath)
                             #print "Detection:: Location -> ({}, {})".format(x, y)
                             detections.append(coordinate_window)
                             scores.append(output[0])
@@ -396,10 +346,10 @@ class CnnClassifier:
                 detections_nms_idx = ops.nms(detections,scores,0.2)
                 detections_nms = [detections[i] for i in detections_nms_idx]
                 print("detected leitbakes=",len(detections_nms))
-                if len(detections_nms) >= 3:
-                    print("more than 3 leitbakes found!")
+                if len(detections_nms) >= 2:
+                    print("more than 2 leitbakes found!")
                     for img_window_pil in imgs_candidate_window_pil:                 
-                        fileName = uuid.uuid4().hex+"_____"+str(idx)+".png"
+                        fileName = uuid.uuid4().hex+"_____"+".png"
                         filePath = "./src/construction_site_lane_detection/dataSet/detectedWindows/" + fileName
                         print(filePath)
                         img_window_pil.save(filePath)
